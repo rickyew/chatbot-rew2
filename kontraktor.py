@@ -1,113 +1,119 @@
 import streamlit as st
-import openai
-import PyPDF2
+from openai import OpenAI
+from PyPDF2 import PdfReader
 import io
-import tiktoken # Opsional, untuk menghitung token
 
-# --- Fungsi untuk Mengekstrak Teks dari PDF ---
+# Fungsi untuk mengekstrak teks dari file PDF yang diunggah
 def extract_text_from_pdf(pdf_file):
-    reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
-    for page_num in range(len(reader.pages)):
-        text += reader.pages[page_num].extract_text()
-    return text
+    """
+    Membaca file PDF yang diunggah dan mengekstrak teks dari semua halaman.
+    """
+    try:
+        # Membaca file dalam memori
+        pdf_reader = PdfReader(io.BytesIO(pdf_file.read()))
+        text = ""
+        # Loop melalui setiap halaman dan tambahkan teksnya
+        for page in pdf_reader.pages:
+            text += page.extract_text() or ""
+        return text
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat membaca file PDF: {e}")
+        return None
 
-# --- Fungsi untuk Berinteraksi dengan OpenAI API ---
-def get_openai_response(api_key, prompt, text_content, model="gpt-3.5-turbo", max_tokens=1500):
-    openai.api_key = api_key
+# Fungsi untuk menganalisis teks kontrak menggunakan API OpenAI
+def analyze_contract_with_openai(api_key, contract_text):
+    """
+    Mengirimkan teks kontrak ke OpenAI API untuk dianalisis.
+    """
+    # Validasi API Key
+    if not api_key.startswith('sk-'):
+        st.error("Format OpenAI API Key tidak valid. Pastikan diawali dengan 'sk-'.")
+        return None
 
     try:
-        # Menggabungkan prompt pengguna dengan konten teks dokumen
-        full_prompt = f"Analisis dokumen kontrak berikut ini:\n\n{text_content}\n\n{prompt}"
+        # Inisialisasi client OpenAI dengan API key
+        client = OpenAI(api_key=api_key)
+        
+        # Prompt yang dirancang untuk menganalisis dokumen kontrak
+        prompt_message = f"""
+        Anda adalah seorang asisten hukum AI yang ahli dalam menganalisis dokumen kontrak.
+        Tolong analisis teks dokumen kontrak berikut dan berikan ringkasan terstruktur dalam format Markdown.
+        Fokus pada poin-poin kunci berikut:
 
-        # Opsional: Hitung token untuk menghindari error batas token
-        encoding = tiktoken.encoding_for_model(model)
-        num_tokens = len(encoding.encode(full_prompt))
+        1.  **Ringkasan Umum**: Jelaskan secara singkat tujuan dari kontrak ini.
+        2.  **Para Pihak**: Identifikasi semua pihak yang terlibat dalam kontrak (misalnya, PIHAK PERTAMA, PIHAK KEDUA, nama perusahaan, atau individu).
+        3.  **Tanggal-Tanggal Penting**: Sebutkan tanggal efektif, tanggal berakhir, atau tanggal penting lainnya yang disebutkan.
+        4.  **Kewajiban Utama**: Rangkum kewajiban utama dari masing-masing pihak.
+        5.  **Klausul Penting**: Identifikasi klausul-klausul penting seperti klausul kerahasiaan, ganti rugi, pemutusan kontrak, dan yurisdiksi hukum.
+        6.  **Potensi Risiko atau Peringatan**: Tandai area mana pun yang mungkin ambigu, berisiko, atau memerlukan perhatian lebih lanjut.
 
-        if num_tokens > 4000: # Contoh batas token, sesuaikan dengan model yang digunakan
-            st.warning(f"Dokumen terlalu panjang ({num_tokens} token). Mungkin akan terpotong atau menghasilkan error.")
-            # Jika terlalu panjang, Anda bisa memotong teks di sini
-            # Atau meminta pengguna untuk ringkasan yang lebih singkat
+        Berikut adalah teks kontraknya:
+        ---
+        {contract_text}
+        ---
+        """
 
-        response = openai.ChatCompletion.create(
-            model=model,
+        # Melakukan panggilan ke API
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Atau model lain seperti "gpt-3.5-turbo"
             messages=[
-                {"role": "system", "content": "Anda adalah asisten AI yang ahli dalam menganalisis dokumen kontrak."},
-                {"role": "user", "content": full_prompt}
+                {"role": "system", "content": "Anda adalah asisten hukum AI yang sangat teliti."},
+                {"role": "user", "content": prompt_message}
             ],
-            max_tokens=max_tokens,
-            temperature=0.7
+            temperature=0.3, # Mengurangi kreativitas untuk hasil yang lebih faktual
+            max_tokens=1500  # Menambah batas token untuk dokumen yang panjang
         )
-        return response.choices[0].message['content']
-    except openai.error.AuthenticationError:
-        st.error("OpenAI API Key tidak valid. Mohon periksa kembali.")
-        return None
-    except openai.error.RateLimitError:
-        st.error("Batas kuota OpenAI API terlampaui. Mohon tunggu sebentar atau upgrade paket Anda.")
-        return None
+        return response.choices[0].message.content
+
     except Exception as e:
-        st.error(f"Terjadi kesalahan saat menghubungi OpenAI API: {e}")
+        st.error(f"Terjadi kesalahan saat menghubungi API OpenAI: {e}")
         return None
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Penganalisis Dokumen Kontrak (PDF) dengan OpenAI", layout="wide")
+# --- UI Aplikasi Streamlit ---
 
-st.title("📄 Penganalisis Dokumen Kontrak (PDF) dengan OpenAI")
-st.write("Unggah dokumen kontrak PDF Anda dan gunakan OpenAI untuk menganalisisnya.")
+# Judul utama aplikasi
+st.title("📄 Analisis Dokumen Kontrak dengan AI")
+st.write("Unggah dokumen kontrak Anda dalam format PDF untuk mendapatkan ringkasan dan analisis poin-poin kunci secara otomatis.")
 
-# Sidebar untuk API Key
-st.sidebar.header("Konfigurasi")
-openai_api_key = st.sidebar.text_input("Masukkan OpenAI API Key Anda", type="password")
-st.sidebar.info("Dapatkan API Key Anda dari [platform.openai.com](https://platform.openai.com/account/api-keys)")
+# Sidebar untuk input API Key
+with st.sidebar:
+    st.header("⚙️ Konfigurasi")
+    # Input API Key OpenAI dengan tipe password agar tidak terlihat
+    openai_api_key = st.text_input(
+        "Masukkan OpenAI API Key Anda", 
+        type="password",
+        help="Dapatkan API key Anda dari platform.openai.com"
+    )
+    st.markdown("---")
+    st.info("API Key Anda tidak disimpan dan hanya digunakan untuk sesi ini.")
 
-# File Uploader
-st.header("Unggah Dokumen PDF")
-uploaded_file = st.file_uploader("Pilih file PDF", type="pdf")
+# Komponen untuk mengunggah file
+uploaded_file = st.file_uploader(
+    "Pilih file kontrak (PDF)", 
+    type="pdf"
+)
 
-if uploaded_file is not None:
-    st.success("File PDF berhasil diunggah!")
-
-    # Membaca file PDF sebagai bytes
-    pdf_bytes = uploaded_file.getvalue()
-
-    # Mengekstrak teks dari PDF
-    try:
-        with io.BytesIO(pdf_bytes) as pdf_buffer:
-            contract_text = extract_text_from_pdf(pdf_buffer)
-        st.subheader("Pratinjau Teks yang Diekstrak (200 karakter pertama):")
-        st.text(contract_text[:500] + "...")
-        st.info(f"Jumlah karakter yang diekstrak: {len(contract_text)}")
-
-        if not contract_text.strip():
-            st.warning("Tidak dapat mengekstrak teks dari PDF. Pastikan PDF tidak berupa gambar.")
-        else:
-            st.header("Mulai Analisis")
-            user_prompt = st.text_area(
-                "Apa yang ingin Anda ketahui tentang kontrak ini?",
-                "Berikan ringkasan poin-poin penting dari kontrak ini, siapa saja pihak yang terlibat, dan kewajiban utama masing-masing pihak."
-            )
-
-            if st.button("Analisis Dokumen"):
-                if not openai_api_key:
-                    st.warning("Mohon masukkan OpenAI API Key Anda di sidebar.")
+# Tombol untuk memulai analisis
+if st.button("Analisa Dokumen"):
+    # Validasi sebelum memulai
+    if not openai_api_key:
+        st.warning("Silakan masukkan OpenAI API Key Anda di sidebar terlebih dahulu.")
+    elif uploaded_file is None:
+        st.warning("Silakan unggah file PDF kontrak terlebih dahulu.")
+    else:
+        # Proses analisis jika semua sudah siap
+        with st.spinner("Harap tunggu, AI sedang membaca dan menganalisis dokumen..."):
+            # 1. Ekstrak teks dari PDF
+            contract_text = extract_text_from_pdf(uploaded_file)
+            
+            if contract_text:
+                st.info("✅ Teks berhasil diekstrak dari PDF. Mengirim ke AI untuk dianalisis...")
+                # 2. Kirim teks ke OpenAI untuk dianalisis
+                analysis_result = analyze_contract_with_openai(openai_api_key, contract_text)
+                
+                # 3. Tampilkan hasil
+                if analysis_result:
+                    st.subheader("Hasil Analisis Kontrak")
+                    st.markdown(analysis_result)
                 else:
-                    with st.spinner("Menganalisis dokumen dengan OpenAI..."):
-                        response_content = get_openai_response(openai_api_key, user_prompt, contract_text)
-                        if response_content:
-                            st.subheader("Hasil Analisis dari OpenAI:")
-                            st.write(response_content)
-
-    except PyPDF2.errors.PdfReadError:
-        st.error("Gagal membaca file PDF. Pastikan ini adalah file PDF yang valid dan tidak terenkripsi.")
-    except Exception as e:
-        st.error(f"Terjadi kesalahan saat memproses PDF: {e}")
-
-else:
-    st.info("Silakan unggah dokumen PDF untuk memulai analisis.")
-
-st.markdown("---")
-st.markdown("Dibuat dengan ❤️ oleh asisten AI")
-
-# Contoh tambahan: Gambar untuk visualisasi
-st.sidebar.subheader("Visualisasi")
-st.sidebar.write("Berikut adalah visualisasi kontrak")
+                    st.error("Gagal mendapatkan hasil analisis. Silakan periksa API Key Anda dan coba lagi.")
